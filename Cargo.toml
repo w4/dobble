@@ -1,0 +1,16 @@
+[package]
+name = "dobble"
+version = "0.1.0"
+authors = ["Jordan Doyle <jordan@doyle.la>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+rustfm-scrobble = "1"
+mpris = "2.0.0-rc2"
+reqwest = { version = "0.10", features = ["rustls-tls", "blocking", "json"] }
+serde = { version = "1", features = ["derive"]}
+lazy_static = "1"
+dirs = "3.0"
+anyhow = "1.0"
