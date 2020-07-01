@@ -1,8 +1,12 @@
-use mpris::{Player, PlayerFinder, Metadata};
-use std::{thread::sleep, time::{Duration, Instant}, io::Read};
-use std::sync::{Mutex, Arc};
-use rustfm_scrobble::{Scrobble, Scrobbler};
 use anyhow::Result;
+use mpris::{Metadata, Player, PlayerFinder};
+use rustfm_scrobble::{Scrobble, Scrobbler};
+use std::sync::{Arc, Mutex};
+use std::{
+    io::Read,
+    thread::sleep,
+    time::{Duration, Instant},
+};
 
 const LAST_FM_API_KEY: &'static str = "401615b0bba90b796964290b7c9ecc36";
 const LAST_FM_API_SECRET: &'static str = "353a68a2d4dfa9a0378e01be16efbaf5";
@@ -92,7 +96,11 @@ fn push_queued_scrobbles(scrobbler: Arc<Scrobbler>) {
     if should_run {
         std::thread::spawn(move || {
             let mut queue = SCROBBLE_QUEUE.lock().unwrap();
-            let batch = queue.iter().map(Track::as_scrobble).collect::<Vec<Scrobble>>().into();
+            let batch = queue
+                .iter()
+                .map(Track::as_scrobble)
+                .collect::<Vec<Scrobble>>()
+                .into();
 
             match scrobbler.scrobble_batch(&batch) {
                 Ok(_) => queue.clear(),
@@ -117,7 +125,11 @@ fn authenticate_lastfm(scrobbler: &mut Scrobbler) -> Result<()> {
     }
 
     // get a token from last.fm and ask the user to authenticate with it
-    let token: AuthToken = reqwest::blocking::get(&format!("https://ws.audioscrobbler.com/2.0/?method=auth.gettoken&format=json&api_key={}", LAST_FM_API_KEY))?.json()?;
+    let token: AuthToken = reqwest::blocking::get(&format!(
+        "https://ws.audioscrobbler.com/2.0/?method=auth.gettoken&format=json&api_key={}",
+        LAST_FM_API_KEY
+    ))?
+    .json()?;
     println!("Please visit the following link and hit any key once allowed: http://www.last.fm/api/auth/?api_key={}&token={}", LAST_FM_API_KEY, token.token);
     std::io::stdin().read(&mut [0])?;
 
@@ -125,14 +137,21 @@ fn authenticate_lastfm(scrobbler: &mut Scrobbler) -> Result<()> {
     let session = scrobbler.authenticate_with_token(&token.token)?;
     std::fs::write(&key_file, session.key)?;
 
-    println!("Successfully authenticated with the Last.fm API and saved credentials to {}", key_file.display());
+    println!(
+        "Successfully authenticated with the Last.fm API and saved credentials to {}",
+        key_file.display()
+    );
 
     Ok(())
 }
 
 fn main() {
     if let Err(e) = std::fs::create_dir_all(&*STORAGE_DIR) {
-        eprintln!("Failed to create storage directory {}: {}", STORAGE_DIR.display(), e);
+        eprintln!(
+            "Failed to create storage directory {}: {}",
+            STORAGE_DIR.display(),
+            e
+        );
         std::process::exit(1);
     }
 
@@ -173,7 +192,7 @@ fn main() {
 
         // skip to the next iteration
         match player.get_playback_status() {
-            Ok(mpris::PlaybackStatus::Playing) => {},
+            Ok(mpris::PlaybackStatus::Playing) => {}
             Ok(mpris::PlaybackStatus::Stopped) => {
                 tune = None;
                 continue;
