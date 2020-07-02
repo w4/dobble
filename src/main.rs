@@ -1,17 +1,18 @@
+#![deny(clippy::all, clippy::pedantic)]
 use anyhow::Result;
-use thiserror::Error;
 use mpris::{Metadata, Player, PlayerFinder};
 use rustfm_scrobble::{Scrobble, Scrobbler};
 use std::sync::{Arc, Mutex};
 use std::{
-    io::Read,
     convert::TryFrom,
+    io::Read,
     thread::sleep,
     time::{Duration, Instant},
 };
+use thiserror::Error;
 
-const LAST_FM_API_KEY: &'static str = "401615b0bba90b796964290b7c9ecc36";
-const LAST_FM_API_SECRET: &'static str = "353a68a2d4dfa9a0378e01be16efbaf5";
+const LAST_FM_API_KEY: &str = "401615b0bba90b796964290b7c9ecc36";
+const LAST_FM_API_SECRET: &str = "353a68a2d4dfa9a0378e01be16efbaf5";
 
 /// Interval to push backed up scrobbles.
 const PUSH_QUEUE_INTERVAL: Duration = Duration::from_secs(60);
@@ -32,7 +33,7 @@ lazy_static::lazy_static! {
         path
     };
 
-    static ref SCROBBLE_QUEUE: Mutex<Vec<Track>> = Default::default();
+    static ref SCROBBLE_QUEUE: Mutex<Vec<Track>> = Mutex::<Vec<Track>>::default();
 }
 
 #[derive(Error, Debug)]
@@ -68,15 +69,22 @@ impl TryFrom<Metadata> for Track {
     fn try_from(metadata: Metadata) -> Result<Self> {
         let mut track = metadata.title().ok_or(Error::MissingMetadata("title"))?;
 
-        let mut artist = metadata.artists().map(|v| v.join(", ")).unwrap_or_else(|| "".to_string());
+        let mut artist = metadata
+            .artists()
+            .map_or_else(|| "".to_string(), |v| v.join(", "));
+
         if artist == "" {
             let mut split = track.splitn(2, " - ");
+
             artist = match split.next() {
-                Some(v) if v.starts_with("▶ ") => &v["▶ ".len()..], // quick fix for plex
-                Some(v) => v,
-                None => return Err(Error::MissingMetadata("artist split from title").into())
-            }.to_string();
-            track = split.next().ok_or(Error::MissingMetadata("artist split from title"))?;
+                Some(v) if v.starts_with("\u{25b6} ") => v["\u{25b6} ".len()..].to_string(), // quick fix for plex
+                Some(v) => v.to_string(),
+                None => return Err(Error::MissingMetadata("artist split from title").into()),
+            };
+
+            track = split
+                .next()
+                .ok_or(Error::MissingMetadata("artist split from title"))?;
         }
 
         Ok(Self {
@@ -100,12 +108,13 @@ fn get_player(finder: &PlayerFinder) -> Player {
     }
 }
 
+/// Sets the given track as now playing
 fn now_playing(scrobbler: &Scrobbler, track: &Track) -> Result<()> {
     scrobbler.now_playing(&track.as_scrobble())?;
     Ok(())
 }
 
-/// Scrobbles the given track.
+/// Scrobbles the given track or places it in the queue if scrobbling failed. 
 fn scrobble(scrobbler: &Scrobbler, track: &Track) {
     if let Err(e) = scrobbler.scrobble(&track.as_scrobble()) {
         // scrobbling failed, lets queue it for later
@@ -114,6 +123,12 @@ fn scrobble(scrobbler: &Scrobbler, track: &Track) {
     }
 }
 
+/// Batches any queued scrobbles and pushes them to Last.fm
+///
+/// SCROBBLE_QUEUE will be locked while pushing to Last.fm, so any scrobbles
+/// that need to be placed in the queue (ie. due to bad network conditions)
+/// will be blocked, and may possibly be lost if the push takes longer than
+/// the length of the track.
 fn push_queued_scrobbles(scrobbler: Arc<Scrobbler>) {
     let should_run = !SCROBBLE_QUEUE.lock().unwrap().is_empty();
 
@@ -155,7 +170,7 @@ fn authenticate_lastfm(scrobbler: &mut Scrobbler) -> Result<()> {
     ))?
     .json()?;
     println!("Please visit the following link and hit any key once allowed: http://www.last.fm/api/auth/?api_key={}&token={}", LAST_FM_API_KEY, token.token);
-    std::io::stdin().read(&mut [0])?;
+    std::io::stdin().read_exact(&mut [0])?;
 
     // authenticate using the token and write it to the key
     let session = scrobbler.authenticate_with_token(&token.token)?;
@@ -230,7 +245,7 @@ fn main() {
             Err(e) => {
                 eprintln!("Failed to collect track metadata: {:?}", e);
                 continue;
-            },
+            }
         };
 
         // convert the currently playing song to a `Track`
