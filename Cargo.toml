@@ -14,3 +14,4 @@ serde = { version = "1", features = ["derive"]}
 lazy_static = "1"
 dirs = "3.0"
 anyhow = "1.0"
+thiserror = "1.0"

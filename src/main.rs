@@ -1,9 +1,11 @@
 use anyhow::Result;
+use thiserror::Error;
 use mpris::{Metadata, Player, PlayerFinder};
 use rustfm_scrobble::{Scrobble, Scrobbler};
 use std::sync::{Arc, Mutex};
 use std::{
     io::Read,
+    convert::TryFrom,
     thread::sleep,
     time::{Duration, Instant},
 };
@@ -33,6 +35,12 @@ lazy_static::lazy_static! {
     static ref SCROBBLE_QUEUE: Mutex<Vec<Track>> = Default::default();
 }
 
+#[derive(Error, Debug)]
+enum Error {
+    #[error("missing metadata field {}", .0)]
+    MissingMetadata(&'static str),
+}
+
 #[derive(Clone, Debug, Eq)]
 struct Track {
     artist: String,
@@ -54,15 +62,30 @@ impl PartialEq<Track> for Track {
     }
 }
 
-impl From<Metadata> for Track {
-    fn from(metadata: Metadata) -> Self {
-        Self {
-            track: metadata.title().unwrap().to_string(),
-            artist: metadata.artists().unwrap().join(", "),
-            album: metadata.album_name().unwrap().to_string(),
+impl TryFrom<Metadata> for Track {
+    type Error = anyhow::Error;
+
+    fn try_from(metadata: Metadata) -> Result<Self> {
+        let mut track = metadata.title().ok_or(Error::MissingMetadata("title"))?;
+
+        let mut artist = metadata.artists().map(|v| v.join(", ")).unwrap_or_else(|| "".to_string());
+        if artist == "" {
+            let mut split = track.splitn(2, " - ");
+            artist = match split.next() {
+                Some(v) if v.starts_with("▶ ") => &v["▶ ".len()..], // quick fix for plex
+                Some(v) => v,
+                None => return Err(Error::MissingMetadata("artist split from title").into())
+            }.to_string();
+            track = split.next().ok_or(Error::MissingMetadata("artist split from title"))?;
+        }
+
+        Ok(Self {
+            track: track.to_string(),
+            artist,
+            album: metadata.album_name().unwrap_or("").to_string(),
             scrobbled: false,
             playing_for: Duration::from_secs(0),
-        }
+        })
     }
 }
 
@@ -84,8 +107,9 @@ fn now_playing(scrobbler: &Scrobbler, track: &Track) -> Result<()> {
 
 /// Scrobbles the given track.
 fn scrobble(scrobbler: &Scrobbler, track: &Track) {
-    if let Err(_) = scrobbler.scrobble(&track.as_scrobble()) {
+    if let Err(e) = scrobbler.scrobble(&track.as_scrobble()) {
         // scrobbling failed, lets queue it for later
+        eprintln!("Failed to scrobble track, adding to queue: {:?}", e);
         SCROBBLE_QUEUE.lock().unwrap().push(track.clone());
     }
 }
@@ -203,11 +227,17 @@ fn main() {
         // collect track metadata
         let metadata = match player.get_metadata() {
             Ok(v) => v,
-            Err(_) => continue,
+            Err(e) => {
+                eprintln!("Failed to collect track metadata: {:?}", e);
+                continue;
+            },
         };
 
         // convert the currently playing song to a `Track`
-        let currently_playing = Track::from(metadata);
+        let currently_playing = match Track::try_from(metadata) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
 
         // if the current tune is the same one playing in the last iteration,
         // increment the time playing and maybe scrobble. otherwise, replace the
