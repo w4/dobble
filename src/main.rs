@@ -114,7 +114,7 @@ fn now_playing(scrobbler: &Scrobbler, track: &Track) -> Result<()> {
     Ok(())
 }
 
-/// Scrobbles the given track or places it in the queue if scrobbling failed. 
+/// Scrobbles the given track or places it in the queue if scrobbling failed.
 fn scrobble(scrobbler: &Scrobbler, track: &Track) {
     if let Err(e) = scrobbler.scrobble(&track.as_scrobble()) {
         // scrobbling failed, lets queue it for later
@@ -135,15 +135,25 @@ fn push_queued_scrobbles(scrobbler: Arc<Scrobbler>) {
     if should_run {
         std::thread::spawn(move || {
             let mut queue = SCROBBLE_QUEUE.lock().unwrap();
-            let batch = queue
-                .iter()
-                .map(Track::as_scrobble)
-                .collect::<Vec<Scrobble>>()
-                .into();
 
-            match scrobbler.scrobble_batch(&batch) {
-                Ok(_) => queue.clear(),
-                Err(e) => eprintln!("Failed to push queued batch: {}", e),
+            if queue.len() == 1 {
+                if let Some(track) = queue.get(0) {
+                    match scrobbler.scrobble(&track.as_scrobble()) {
+                        Ok(_) => queue.clear(),
+                        Err(e) => eprintln!("Failed to push queued track: {}", e),
+                    }
+                }
+            } else {
+                let batch = queue
+                    .iter()
+                    .map(Track::as_scrobble)
+                    .collect::<Vec<Scrobble>>()
+                    .into();
+
+                match scrobbler.scrobble_batch(&batch) {
+                    Ok(_) => queue.clear(),
+                    Err(e) => eprintln!("Failed to push queued batch: {}", e),
+                }
             }
         });
     }
